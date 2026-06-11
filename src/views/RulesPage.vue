@@ -278,14 +278,19 @@ watch(
 
     await fetchRules()
 
+    const hasError = ruleRefreshState.value.errors > 0
+    const errorMessage = ruleRefreshState.value.lastError.trim()
+
     showNotification({
       key: 'ruleRefreshCompletedTip',
-      content: 'ruleRefreshCompletedTip',
-      params: {
-        number: `${ruleRefreshState.value.totalRules}`,
-      },
-      type: ruleRefreshState.value.errors > 0 ? 'alert-warning' : 'alert-success',
-      timeout: 2500,
+      content: hasError && errorMessage ? errorMessage : 'ruleRefreshCompletedTip',
+      params: hasError
+        ? {}
+        : {
+            number: `${ruleRefreshState.value.totalRules}`,
+          },
+      type: hasError ? 'alert-warning' : 'alert-success',
+      timeout: hasError ? 5000 : 2500,
     })
   },
 )

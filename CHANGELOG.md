@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.86](https://github.com/liandu2024/AnGe-ClashBoard/compare/v1.85...v1.86) (2026-06-12)
+
+### Bug Fixes
+
+* keep managed rule-source syncing from dropping providers during single or bulk rule refreshes, and report missing provider source URLs explicitly
+
 ## [1.85](https://github.com/liandu2024/AnGe-ClashBoard/compare/v1.84...v1.85) (2026-04-03)
 
 ### Bug Fixes

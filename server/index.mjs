@@ -681,45 +681,54 @@ async function syncManagedRuleSourceConfigFromController(options = {}) {
       ? [...new Set(options.providerNames.map((name) => String(name || '').trim()).filter(Boolean))]
       : null
   const controllerRules = await fetchControllerRules(backend)
-  const referencedProviderNames =
-    requestedProviderNames || getReferencedProviderNamesFromControllerRules(controllerRules)
+  const controllerReferencedProviderNames = getReferencedProviderNamesFromControllerRules(controllerRules)
+  const referencedProviderNames = requestedProviderNames
+    ? [...new Set([...controllerReferencedProviderNames, ...requestedProviderNames])]
+    : controllerReferencedProviderNames
   const controllerProviders = await fetchControllerRuleProviders(backend)
   const controllerProviderMap = new Map(
     controllerProviders.map((provider) => [String(provider?.name || '').trim(), provider]),
   )
   const candidateMap = getManagedRuleSourceCandidateMap()
-  const nextProviders = referencedProviderNames
-    .map((providerName) => {
-      const baseProvider = candidateMap.get(providerName)
-
-      if (!baseProvider) {
-        return null
-      }
-
-      const controllerProvider = controllerProviderMap.get(providerName)
-
-      return {
-        ...baseProvider,
-        behavior: controllerProvider?.behavior || baseProvider.behavior,
-        format: controllerProvider?.format || baseProvider.format,
-      }
-    })
-    .filter(Boolean)
   const currentProviderEntries = fs.existsSync(defaultRuleSourceConfigPath)
     ? extractRuleProviderEntries(defaultRuleSourceConfigPath)
     : []
+  const nextProviders = []
+  const unresolvedProviders = []
+
+  for (const providerName of referencedProviderNames) {
+    const baseProvider = candidateMap.get(providerName)
+
+    if (!baseProvider) {
+      unresolvedProviders.push(providerName)
+      continue
+    }
+
+    const controllerProvider = controllerProviderMap.get(providerName)
+
+    nextProviders.push({
+      ...baseProvider,
+      behavior: controllerProvider?.behavior || baseProvider.behavior,
+      format: controllerProvider?.format || baseProvider.format,
+    })
+  }
+
   const defaultConfigMissing = !fs.existsSync(defaultRuleSourceConfigPath)
   const currentProviderSignature = getRuleProviderSignature(currentProviderEntries)
   const nextProviderSignature = getRuleProviderSignature(nextProviders)
+  const shouldWriteConfig =
+    defaultConfigMissing ||
+    currentProviderSignature !== nextProviderSignature
 
-  if (defaultConfigMissing || currentProviderSignature !== nextProviderSignature) {
+  if (shouldWriteConfig && (!requestedProviderNames || nextProviders.length > 0)) {
     fs.mkdirSync(path.dirname(defaultRuleSourceConfigPath), { recursive: true })
     fs.writeFileSync(defaultRuleSourceConfigPath, stringifyManagedRuleSourceConfig(nextProviders))
   }
 
   return {
-    changed: defaultConfigMissing || currentProviderSignature !== nextProviderSignature,
+    changed: shouldWriteConfig && (!requestedProviderNames || nextProviders.length > 0),
     updatedProviders: nextProviders.length,
+    unresolvedProviders,
     path: defaultRuleSourceConfigPath,
     skipped: false,
   }
@@ -2407,10 +2416,20 @@ const updateRuleProviderCache = async (options = {}) => {
         kind: getRuleProviderKind(provider.url, provider.format, provider.behavior),
       }))
       .filter((provider) => !providerNames || providerNames.includes(provider.name))
+    const configuredProviderNameSet = new Set(providers.map((provider) => provider.name))
+    const unresolvedProviderNames =
+      providerNames?.filter((providerName) => !configuredProviderNameSet.has(providerName)) ||
+      ruleSourceConfigSync.unresolvedProviders ||
+      []
     const cachedProviderMap = new Map(
       getCachedRuleProviderStatement.all().map((provider) => [provider.name, provider]),
     )
-    const errors = []
+    const errors = unresolvedProviderNames.map((providerName) => ({
+      name: providerName,
+      url: '',
+      message:
+        `Rule provider source URL is not configured for "${providerName}". Add it to data/rule-source.yaml or set ZASHBOARD_RULE_SOURCE_PATH.`,
+    }))
     let updatedCount = 0
     let progressRules = 0
     const fetchedItems = []
@@ -2422,7 +2441,7 @@ const updateRuleProviderCache = async (options = {}) => {
       totalProviders: providers.length,
       updatedProviders: 0,
       totalRules: 0,
-      errors: 0,
+      errors: errors.length,
       unsupportedCount,
       cancelled: false,
       completed: false,
@@ -2702,7 +2721,7 @@ const startBackgroundRuleRefresh = (options = {}) => {
           await controllerFetch(backend, `/providers/rules/${encodeURIComponent(provider.name)}`, {
             method: 'PUT',
           })
-        } catch (error) {
+        } catch {
           if (activeRuleRefreshController.signal.aborted) {
             break
           }
